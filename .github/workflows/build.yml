@@ -1,14 +1,11 @@
-name: build
+name: Padavan固件编译
 
-on: 
-#  push:
-#    branches:
-#    - "*"
+on:
   workflow_dispatch:
     inputs:
       target:
         type: choice
-        description: 'Please select the model to compile'
+        description: '选择设备型号'
         options:
         - 'B70'
         - 'BELL-A040WQ'
@@ -53,42 +50,53 @@ on:
         default: 'K2P'
       release:
         type: boolean
-        description: 'upload to release'
+        description: '发布到Release'
         default: 'true'
+
 jobs:
   build:
-    name: ${{ inputs.target }}
+    name: 编译-${{ inputs.target }}
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: hendrikmuhs/ccache-action@v1.2.3
-      - uses: actions/setup-go@v3
+      - name: 检出源码
+        uses: actions/checkout@v4
         with:
-          go-version: '^1.19.2'
-      - uses: actions/cache@v3
+          submodules: recursive  # 必须递归拉取子模块
+
+      - name: 安装依赖
+        run: |
+          sudo apt update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y \
+            unzip libtool-bin gperf gettext autoconf automake bison flex texinfo g++ \
+            libncurses5-dev libssl-dev python3-docutils ccache
+
+      - name: 配置交叉编译链
+        run: |
+          cd ~
+          wget -q https://github.com/hanwckf/padavan-toolchain/releases/download/2023-11-09/toolchain-mipsel-2023-11-09.zip
+          unzip -q toolchain-mipsel-*.zip -d toolchain
+          echo "PATH=$HOME/toolchain/bin:$PATH" >> $GITHUB_ENV
+
+      - name: 编译固件
+        run: |
+          cd $GITHUB_WORKSPACE
+          cp -f configs/${{ inputs.target }}.config .config
+          make -j$(nproc) all
+          echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+
+      - name: 上传固件
+        uses: actions/upload-artifact@v4
         with:
+          name: ${{ inputs.target }}-${{ env.BUILD_DATE }}
           path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-v1
-          restore-keys: |
-            ${{ runner.os }}-go-
-      - name: Prepare environment
-        run: |
-          sudo apt update
-          sudo apt install libtool-bin gperf python3-docutils autopoint gettext ccache
-      - name: Start Build
-        run: |
-          make ${{ inputs.target }}
-          echo "TAG_ANME=$(date +%Y%m%d)" >> $GITHUB_ENV
-      - uses: actions/upload-artifact@v3
-        with:
-          name: ${{ inputs.target }}-${{ env.TAG_ANME }}
-          path: trunk/images/*.trx
-      - uses: ncipollo/release-action@v1
+            bin/targets/**/*.trx  # Padavan固件输出路径
+            bin/targets/**/*.txt  # 包含版本信息的文本文件
+
+      - name: 发布到Release
         if: github.event.inputs.release == 'true'
+        uses: softprops/action-gh-release@v1
         with:
-          commit: ${{ github.sha }}
-          tag: Padavan
-          artifacts: trunk/images/*.trx
-          allowUpdates: true
+          tag_name: Padavan-${{ env.BUILD_DATE }}
+          files: bin/targets/**/*
+          body: "编译日期: ${{ env.BUILD_DATE }}\n设备型号: ${{ inputs.target }}"
