@@ -49,6 +49,7 @@ on:
         - 'XY-C1'
         - 'ZTE-E8820S'
         - 'WE410443-TC'
+        - 'WIA3300-10'
         default: 'K2P'
       release:
         type: boolean
